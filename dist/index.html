@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Tassisto.be</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; background: #000; }
+    body { min-height: 100dvh; min-width: 100vw; display: grid; place-items: center; color: #f5f7f5; }
+    main { width: 100%; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 1rem 1rem 1.5rem; }
+    img { display: block; width: min(100vw, calc(100dvh - 120px)); height: min(100vw, calc(100dvh - 120px)); object-fit: contain; }
+    p { max-width: 58rem; margin: 1rem 0 0; text-align: center; font: 500 clamp(.8rem, 1.55vw, 1.05rem)/1.6 system-ui, sans-serif; letter-spacing: .025em; }
+    .accent { color: #16ec6b; }
+    @media (max-width: 520px) { main { padding: .5rem .5rem 1rem; } p { margin-top: .7rem; font-size: .78rem; line-height: 1.45; } }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/assets/tassisto-matrix.jpg" alt="Tassisto.be in groene Matrix-stijl">
+    <p><span class="accent">Passie</span> zet je in beweging. <span class="accent">Discipline</span> houdt je op koers. <span class="accent">Geduld</span> brengt je verder. <span class="accent">Gezond verstand</span> houdt je scherp.</p>
+  </main>
+</body>
+</html>
