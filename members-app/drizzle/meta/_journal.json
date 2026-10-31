@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792889977600,
+      "tag": "0000_oval_valkyrie",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792890223127,
+      "tag": "0001_brief_anthem",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792893654719,
+      "tag": "0003_secret_red_hulk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792898674772,
+      "tag": "0004_public_leaderboard_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792905277369,
+      "tag": "0004_attendance_confirmed",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792899500000,
+      "tag": "0005_attendance_confirmed",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792914066116,
+      "tag": "0006_attendance_finalization",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1793448889037,
+      "tag": "0007_reflective_ghost_rider",
+      "breakpoints": true
+    }
+  ]
+}
