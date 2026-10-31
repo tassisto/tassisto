@@ -1,0 +1,76 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+import {createRequire} from 'node:module';
+import {DatabaseSync} from 'node:sqlite';
+import ts from 'typescript';
+
+// Execute the actual route/auth code against SQLite through the D1 interface.
+// Firebase identity lookup is the only external service replaced by fixtures.
+const require=createRequire(import.meta.url);
+const root=path.resolve(import.meta.dirname,'..');
+const sqlite=new DatabaseSync(':memory:');
+sqlite.exec('PRAGMA foreign_keys = ON');
+for(const file of fs.readdirSync(path.join(root,'drizzle')).filter(file=>file.endsWith('.sql')).sort())sqlite.exec(fs.readFileSync(path.join(root,'drizzle',file),'utf8'));
+const d1={prepare(sql){let params=[];return{bind(...values){params=values.map(value=>typeof value==='boolean'?Number(value):value);return this;},async run(){const result=sqlite.prepare(sql).run(...params);return{success:true,results:[],meta:{changes:Number(result.changes),last_row_id:Number(result.lastInsertRowid)}};},async all(){return{success:true,results:sqlite.prepare(sql).all(...params),meta:{}};},async raw(){const statement=sqlite.prepare(sql);statement.setReturnArrays(true);return statement.all(...params);},async first(column){const row=sqlite.prepare(sql).get(...params);return column?row?.[column]??null:row??null;}};},async batch(statements){sqlite.exec('BEGIN');try{const result=[];for(const statement of statements)result.push(await statement.run());sqlite.exec('COMMIT');return result;}catch(error){sqlite.exec('ROLLBACK');throw error;}}};
+const env={DB:d1,SITE_OWNER_EMAIL:'admin@example.com',FIREBASE_API_KEY:'fixture',FIREBASE_AUTH_DOMAIN:'fixture.invalid',FIREBASE_PROJECT_ID:'fixture',FIREBASE_APP_ID:'fixture'};
+const identities={owner:{localId:'firebase-owner',email:'admin@example.com',displayName:'Organizer',emailVerified:true},member:{localId:'firebase-member',email:'APPROVED@example.com',displayName:'Firebase name',emailVerified:true},pending:{localId:'firebase-pending',email:'pending@example.com',emailVerified:true},new:{localId:'firebase-new',email:'new@example.com',emailVerified:true},unverified:{localId:'unverified',email:'approved@example.com',emailVerified:false}};
+const fetch=async(url,options)=>{assert.match(String(url),/^https:\/\/identitytoolkit.googleapis.com\/v1\/accounts:lookup\?/);const identity=identities[JSON.parse(options.body).idToken];return Response.json(identity?{users:[identity]}:{error:{message:'INVALID_ID_TOKEN'}},{status:identity?200:400});};
+const cache=new Map();
+function load(file){file=path.resolve(root,file);if(cache.has(file))return cache.get(file).exports;const module={exports:{}};cache.set(file,module);const code=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;const localRequire=name=>{if(name==='cloudflare:workers')return{env};if(name==='next/server')return{NextResponse:{json:(body,init)=>Response.json(body,init)}};if(!name.startsWith('.'))return require(name);const base=path.resolve(path.dirname(file),name);const found=[base+'.ts',base+'.tsx',path.join(base,'index.ts')].find(candidate=>fs.existsSync(candidate));if(!found)throw Error('Missing import '+name);return load(found);};vm.runInNewContext(code,{exports:module.exports,module,require:localRequire,fetch,Request,Response,Headers,Intl,Date,URL,console,setTimeout,clearTimeout},{filename:file});return module.exports;}
+let checks=0;
+async function call(file,method,token,body,expected=200,origin='https://members.example.com'){const response=await load(file)[method](new Request('https://members.example.com/api/test',{method,headers:{...(token?{Authorization:'Bearer '+token}:{}),...(method!=='GET'?{'Content-Type':'application/json',Origin:origin}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})}));const data=await response.json();assert.equal(response.status,expected,JSON.stringify(data));checks++;return data;}
+const admin='app/api/admin/route.ts', member='app/api/member/route.ts',booking='app/api/bookings/route.ts',calendar='app/api/sessions/route.ts',session='app/api/auth/session/route.ts';
+const future=new Date(Date.now()+86400000).toISOString(),past=new Date(Date.now()-86400000).toISOString();
+sqlite.prepare('INSERT INTO members (user_id,email,display_name,status,consented_at) VALUES (?,?,?,?,?)').run('legacy-approved','approved@example.com','Original member','approved',past);
+sqlite.prepare('INSERT INTO members (user_id,email,display_name,status,consented_at) VALUES (?,?,?,?,?)').run('legacy-pending','pending@example.com','Pending member','pending',past);
+assert.equal((await call(session,'GET','member')).userId,'legacy-approved');
+assert.equal((await call(session,'GET','owner')).isAdmin,true);
+await call(session,'GET','unverified',undefined,401);await call(session,'GET','invalid',undefined,401);
+await call(admin,'GET','member',undefined,403);await call(admin,'GET',null,undefined,403);
+const seeded=await call(calendar,'GET',null);assert.equal(seeded.sessions.filter(s=>s.title.startsWith('No-Gi')).length,11);checks++;
+await call(calendar,'GET',null);assert.equal(sqlite.prepare('SELECT count(*) AS n FROM sessions').get().n,11);checks++;
+sqlite.prepare('INSERT INTO sessions (id,title,focus,starts_at,location,capacity,is_open) VALUES (?,?,?,?,?,?,?)').run(501,'Fixture session','No-Gi',future,'Taroudant',10,1);
+sqlite.prepare('INSERT INTO sessions (id,title,focus,starts_at,location,capacity,is_open) VALUES (?,?,?,?,?,?,?)').run(502,'Past session','No-Gi',past,'Taroudant',10,1);
+assert.equal((await call(member,'GET','member')).member.status,'approved');
+await call(booking,'POST',null,{sessionId:501},401);await call(booking,'POST','pending',{sessionId:501},403);await call(booking,'POST','unverified',{sessionId:501},401);
+await call(booking,'POST','member',{sessionId:501},403,'https://evil.example');await call(booking,'POST','member',{sessionId:'bad'},400);
+await call(booking,'POST','member',{sessionId:501});await call(booking,'POST','member',{sessionId:501},409);
+assert.equal((await call(calendar,'GET','member')).sessions.find(s=>s.id===501).isBooked,true);
+assert.equal((await call(calendar,'GET','pending')).sessions.find(s=>s.id===501).isBooked,false);
+await call(booking,'DELETE','pending',{sessionId:501},404);await call(booking,'DELETE','member',{sessionId:501});
+await call(booking,'POST','member',{sessionId:502},409);
+await call(admin,'POST','member',{action:'member-status',userId:'legacy-pending',status:'approved'},403);
+await call(admin,'POST','owner',{action:'member-status',userId:'legacy-pending',status:'approved'});
+await call(booking,'POST','pending',{sessionId:501});
+await call(admin,'POST','owner',{action:'member-status',userId:'legacy-pending',status:'rejected'});
+assert.equal(sqlite.prepare('SELECT count(*) AS n FROM bookings WHERE user_id=?').get('legacy-pending').n,0);checks++;
+await call(booking,'POST','pending',{sessionId:501},403);
+await call(booking,'POST','owner',{sessionId:501});assert.equal((await call(calendar,'GET','owner')).sessions.find(s=>s.id===501).booked,0);
+for(let i=0;i<10;i++){sqlite.prepare('INSERT INTO members(user_id,email,display_name,status) VALUES(?,?,?,?)').run('full-'+i,'full'+i+'@example.com','Full '+i,'approved');sqlite.prepare('INSERT INTO bookings(session_id,user_id) VALUES(?,?)').run(501,'full-'+i);}
+await call(booking,'POST','member',{sessionId:501},409);
+await call(member,'POST','new',{consent:true},409);
+sqlite.prepare('DELETE FROM bookings WHERE user_id=?').run('full-0');sqlite.prepare('DELETE FROM members WHERE user_id LIKE ?').run('full-%');
+await call(member,'POST','new',{consent:false},400);await call(member,'POST','new',{consent:true});await call(booking,'POST','new',{sessionId:501},403);
+await call(admin,'POST','owner',{action:'member-status',userId:'firebase-new',status:'approved'});await call(booking,'POST','new',{sessionId:501});
+const editorDate=new Intl.DateTimeFormat('en-GB',{timeZone:'Africa/Casablanca',day:'2-digit',month:'2-digit',year:'numeric'}).format(new Date(Date.now()+2*86400000));
+await call(admin,'POST','owner',{action:'update-session',sessionId:501,title:'Edited fixture',focus:'K-guard',date:editorDate,time:'19:30',location:'Taroudant'});
+assert.equal(sqlite.prepare('SELECT count(*) AS n FROM bookings WHERE session_id=501').get().n,2);checks++;
+await call(admin,'POST','owner',{action:'archive-session',sessionId:501});assert.equal((await call(calendar,'GET','member')).sessions.some(s=>s.id===501),false);
+await call(booking,'POST','member',{sessionId:501},409);await call(admin,'POST','owner',{action:'restore-session',sessionId:501});
+await call(booking,'POST','member',{sessionId:501},409);await call(admin,'POST','owner',{action:'toggle-session',sessionId:501,isOpen:true});await call(booking,'POST','member',{sessionId:501});
+await call(admin,'POST','owner',{action:'attendance',sessionId:501,userId:'legacy-approved',status:'on_time'},400);
+sqlite.prepare('INSERT INTO bookings(session_id,user_id) VALUES(?,?)').run(502,'legacy-approved');
+await call(admin,'POST','owner',{action:'close-attendance',sessionId:502},409);await call(admin,'POST','owner',{action:'attendance',sessionId:502,userId:'legacy-approved',status:'on_time'});await call(admin,'POST','owner',{action:'close-attendance',sessionId:502});
+await call(admin,'POST','owner',{action:'attendance',sessionId:502,userId:'legacy-approved',status:'absent'},409);
+await call(member,'PATCH','member',{publicName:'Focused grappler'});const leaderboard=await call('app/api/leaderboard/route.ts','GET',null);assert.equal(leaderboard.entries[0].score,1);assert.equal(leaderboard.entries[0].name,'Focused grappler');checks++;
+await call(member,'DELETE','member');assert.equal(sqlite.prepare('SELECT count(*) AS n FROM bookings WHERE user_id=? AND session_id=501').get('legacy-approved').n,0);checks++;assert.equal(sqlite.prepare('SELECT count(*) AS n FROM bookings WHERE user_id=? AND session_id=502').get('legacy-approved').n,1);checks++;
+await call(admin,'POST','owner',{action:'create-session',title:'Created via admin',focus:'No-Gi',date:editorDate,time:'20:00',location:'Taroudant'});
+assert.ok(sqlite.prepare('SELECT id FROM sessions WHERE title=?').get('Created via admin'));checks++;
+await call(admin,'POST','owner',{action:'create-session',title:'bad',date:'99/99/2026',time:'25:00',location:'Taroudant'},400);
+await call(admin,'POST','owner',{action:'member-status',userId:'firebase-owner',status:'rejected'},400);
+sqlite.prepare('INSERT INTO members(user_id,email,display_name,status) VALUES(?,?,?,?)').run('duplicate','APPROVED@example.com','Duplicate','approved');
+await call(session,'GET','member',undefined,401);sqlite.prepare('DELETE FROM members WHERE user_id=?').run('duplicate');
+const finalAdmin=await call(admin,'GET','owner');assert.ok(finalAdmin.members.some(m=>m.userId==='legacy-approved'));assert.ok(finalAdmin.sessions.find(s=>s.id===502).roster[0].attendanceStatus==='on_time');checks++;
+console.log(checks+' workflow checks passed: verified identities, legacy approvals, admin isolation, membership approval/revocation, session editing, capacity, booking/cancellation, archive/restore, attendance finalization and leaderboard privacy.');

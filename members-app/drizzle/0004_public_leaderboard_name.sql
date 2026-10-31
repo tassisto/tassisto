@@ -1,0 +1,1 @@
+ALTER TABLE `members` ADD `public_name` text;

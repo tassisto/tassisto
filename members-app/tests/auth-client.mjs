@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+const storage=new Map(),exports={};let queue=[],calls=[];
+const fetch=async(url,options)=>{calls.push({url,options});const result=queue.shift();assert.ok(result,'Unexpected request '+url);return Response.json(result.body,{status:result.status??200});};
+const code=ts.transpileModule(fs.readFileSync(new URL('../app/firebase-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
+vm.runInNewContext(code,{exports,fetch,localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},Response,Headers,Date,URLSearchParams});
+const cfg={apiKey:'fixture',projectId:'fixture',authDomain:'fixture.invalid',appId:'fixture'},tokens={idToken:'id',refreshToken:'refresh',expiresIn:'3600'};
+queue=[{body:cfg},{body:tokens},{body:{users:[{emailVerified:false}]}}];await assert.rejects(exports.signIn(' owner@example.com ','password'),/Verify your email first/);assert.equal(JSON.parse(calls[1].options.body).email,'owner@example.com');
+queue=[{body:cfg},{body:tokens},{body:{users:[{emailVerified:true}]}},{body:{userId:'owner',isAdmin:true}}];assert.equal((await exports.signIn('owner@example.com','password')).isAdmin,true);
+queue=[{body:cfg},{body:{email:'owner@example.com'}}];await exports.sendPasswordReset(' owner@example.com ');assert.equal(JSON.parse(calls.at(-1).options.body).requestType,'PASSWORD_RESET');assert.equal(JSON.parse(calls.at(-1).options.body).email,'owner@example.com');
+queue=[{body:cfg},{body:tokens},{body:{}}];await exports.resendVerification('owner@example.com','password');assert.equal(JSON.parse(calls.at(-1).options.body).requestType,'VERIFY_EMAIL');
+queue=[{status:503,body:{}}];await assert.rejects(exports.currentUser(),/temporarily unavailable/);assert.ok(storage.size);
+queue=[{status:401,body:{}}];assert.equal(await exports.currentUser(),null);assert.equal(storage.size,0);
+queue=[{body:cfg},{status:400,body:{error:{message:'INVALID_LOGIN_CREDENTIALS'}}}];await assert.rejects(exports.signIn('owner@example.com','wrong'),/email or password is incorrect/);
+queue=[{body:cfg},{status:400,body:{error:{message:'CONFIGURATION_NOT_FOUND'}}}];await assert.rejects(exports.sendPasswordReset('owner@example.com'),/not configured/);
+assert.equal(queue.length,0);console.log('8 client authentication checks passed: verified login, unverified rejection, password reset, verification resend, transient recovery, invalid session cleanup, credentials and setup errors.');
