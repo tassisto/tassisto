@@ -2,9 +2,11 @@ export type AppUser = { userId: string; displayName: string; email: string; isAd
 type FirebaseConfig = { apiKey: string; authDomain: string; projectId: string; appId: string };
 type StoredSession = { idToken: string; refreshToken: string; expiresAt: number };
 const SESSION_KEY = "tassisto.firebase.session";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+function apiUrl(path: string) { return API_BASE_URL && path.startsWith("/api/") ? `${API_BASE_URL}${path}` : path; }
 
 async function config(): Promise<FirebaseConfig> {
-  const response = await fetch("/api/auth/config", { cache: "no-store" });
+  const response = await fetch(apiUrl("/api/auth/config"), { cache: "no-store" });
   if (!response.ok) throw new Error("Firebase Authentication is not configured yet.");
   return response.json() as Promise<FirebaseConfig>;
 }
@@ -35,7 +37,7 @@ export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}
   const headers = new Headers(init.headers);
   const token = await getIdToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(input, { ...init, headers });
+  return fetch(typeof input === "string" ? apiUrl(input) : input, { ...init, headers });
 }
 async function authenticate(endpoint: "signInWithPassword" | "signUp", email: string, password: string) {
   const cfg = await config();
@@ -81,7 +83,7 @@ export async function sendPasswordReset(email: string) {
 export async function currentUser(): Promise<AppUser | null> {
   const token = await getIdToken();
   if (!token) return null;
-  const response = await fetch("/api/auth/session", { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  const response = await fetch(apiUrl("/api/auth/session"), { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!response.ok) { if(response.status===401) clearSession(); else throw new Error("Member sign-in is temporarily unavailable. Please try again."); return null; }
   return response.json() as Promise<AppUser>;
 }

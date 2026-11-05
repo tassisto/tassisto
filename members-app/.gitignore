@@ -11,6 +11,7 @@
 
 # Generated builds and framework state
 /dist/
+/firebase-dist/
 /.next/
 /.vinext/
 /out/
